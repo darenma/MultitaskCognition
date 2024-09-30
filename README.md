@@ -18,13 +18,19 @@ Here `-t 1` means we are executing on T1-weighted images, and `-n 3` tells the m
 
 The `.nii` NIFTI files were obtained by using the dcm to nii tool in Python, or, some websites have provided them directly.
 
-## Step 2: Train the UNet and MedicalNet Models.
+## Step 2: Train the UNet and [MedicalNet](https://github.com/Tencent/MedicalNet) Models.
 
 ## Step 3: Analyze the results and conduct feature importance.
 
+The notebooks in `Paper_Figure_Work` contains the following analysis scripts.
+
+
+
 ## Step 4: Finetune the model on stage and seeding results from EBM (Paper 2: WIP).
 
+This is a follow-up project built on the Multitask model families, plus the Event-Based Model [pySuStaIn](https://github.com/ucl-pond/pySuStaIn), [and the Nexis model](https://github.com/Raj-Lab-UCSF/Nexis).
 
+There is no plan to upload this part of code until we finish all related experiments.
 
 ##
 If you have any question please reach out via daren.ma@ucsf.edu
