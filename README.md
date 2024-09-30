@@ -12,6 +12,11 @@ We will shortly share 2 example MRI scans for testing the script.
 
 ## Step 1: Co-registration and Segmentation using [FSL-FAST](https://web.mit.edu/fsl_v5.0.10/fsl/doc/wiki/FAST.html) on MRI files.
 
+For example: `fast -t 1 -n 3 -H 0.1 -I 4 -l 20.0 -o output_name input_image.nii.gz`
+
+Here `-t 1` means we are executing on T1-weighted images, and `-n 3` tells the model to segment for 3 tissues (GM, WM, CSF)
+
+The `.nii` NIFTI files were obtained by using the dcm to nii tool in Python, or, some websites have provided them directly.
 
 ## Step 2: Train the UNet and MedicalNet Models.
 
