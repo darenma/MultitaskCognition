@@ -10,5 +10,16 @@ The structural MRI data used in this work are available to researchers via the H
 
 We will shortly share 2 example MRI scans for testing the script.
 
+## Step 1: Co-registration and Segmentation using [FSL-FAST](https://web.mit.edu/fsl_v5.0.10/fsl/doc/wiki/FAST.html) on MRI files.
+
+
+## Step 2: Train the UNet and MedicalNet Models.
+
+## Step 3: Analyze the results and conduct feature importance.
+
+## Step 4: Finetune the model on stage and seeding results from EBM (Paper 2: WIP).
+
+
+
 ##
 If you have any question please reach out via daren.ma@ucsf.edu
