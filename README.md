@@ -2,7 +2,7 @@
 
 This is the Repository for the manucsript "Predicting categorical and continuous outcomes of subjects on the Alzheimer’s Disease spectrum using a single MRI without PET, cognitive or fluid biomarkers".
 
-## Currently cleaning, documentating, and formatting the code. The full model structure will be uploaded by 5pm PST Sep.29th (Sunday).
+## Currently cleaning, documentating, and formatting the code. The full model structure will be uploaded by 5pm PST Sep.30th (Monday).
 
 ## Data Availability:
 Please download the data accordingly:
