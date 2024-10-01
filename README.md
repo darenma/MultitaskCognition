@@ -20,6 +20,8 @@ The `.nii` NIFTI files were obtained by using the dcm to nii tool in Python, or,
 
 ## Step 2: Train the UNet and [MedicalNet](https://github.com/Tencent/MedicalNet) Models.
 
+For the UNet part of the model, simply run `python unet3d_lightning_tabular.py`
+
 ## Step 3: Analyze the results and conduct feature importance.
 
 The notebooks in `Paper_Figure_Work` contains the following analysis scripts.
