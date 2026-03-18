@@ -1,261 +1,166 @@
 import os
+import pickle
+import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils
-from PIL import Image
-# import cv2
-import itertools
-# from skimage import io
-import random
-from pathlib import Path
-from random import randint
-from volumentations import *
+from sklearn.model_selection import train_test_split
 import nibabel as nib
-import matplotlib.pyplot as plt
-import pickle
-from imports import *
-import pandas as pd
-# from volumentations import RandomCrop, CenterCrop, ElasticTransform, RandomRotate90, Normalize
-class CogDataset3d(torch.utils.data.Dataset):
-   
-    """
-    Class for getting individual transformations and data
-    Args:
-        input_dir = path of input images
-        target_dir = path of target images
-        input = list of filenames for input
-        target = list of filenames for target
-        transform = Images transformation (default: False)
-        crop = crop size
-        df = dataframe for cognitive scores
-    Output:
-        Transformed input
-        Transformed image target
-        ADAS11 score
-        MMSE score
-        filename
-        
-    """
-    
-    def __init__(self, input_dir, target_dir, input_files, df, transform=False, crop = (128,128,128)):
-        self.input_dir = input_dir 
-        self.target_dir = target_dir
-        # sorted files in X_tr or X_v.
-        self.input = sorted(input_files)   
-        self.transform = transform
-        self.crop = crop
-        self.df = df
-        
-        
-        patient_files = pickle.load(open("/home/madar/patient_files.data", "rb"))
-        self.patient_files = list(set(map(lambda x: x[0], patient_files)))
-        
-        self.train_transforms = Compose([RandomCrop(shape = (128,128,128), always_apply=True),
-                                        ElasticTransform((0, 0.20), interpolation=4, p=1),
-                                         RandomRotate90((0,1), p=0.5),
-                                        #RandomGamma(gamma_limit=(0.5, 1.5), p=0.8),
-                                         Normalize(always_apply=True)], p=1.0)
+from volumentations import *
 
-        self.val_transforms = Compose([CenterCrop(shape = (128,128,128), always_apply=True),
-                                       Normalize(always_apply=True)], p=1.0)
+# =====================
+# Dataset
+# =====================
+
+class CogDataset3d(Dataset):
+    def __init__(self, input_dir, target_dir, files, df, transform=False):
+        self.input_dir = input_dir
+        self.target_dir = target_dir
+        self.files = sorted(files)
+        self.df = df
+        self.transform = transform
+
+        # Keep only samples with labels (IMPORTANT)
+        valid_files = set(df['filenames'].values)
+        self.files = [f for f in self.files if f.split('.nii')[0] in valid_files]
+
+        # Simple in-memory cache (huge speedup)
+        self.cache = {}
+
+        # Transforms (less aggressive → better R²)
+        self.train_tf = Compose([
+            RandomCrop((128,128,128), always_apply=True),
+            ElasticTransform((0, 0.05), p=0.3),
+            RandomRotate90((0,1), p=0.5),
+            Normalize(always_apply=True)
+        ])
+
+        self.val_tf = Compose([
+            CenterCrop((128,128,128), always_apply=True),
+            Normalize(always_apply=True)
+        ])
 
     def __len__(self):
-        return len(self.input)
-    
-        
-    def __getitem__(self, i):
-        
-        # grab the baseline images
-        X_tr_pid = list(map(lambda x: x[8:16], [self.input[i]]))
-        new_input = list(map(self.get_baseline_file, X_tr_pid))[0]
-        new_target = new_input.split('.nii')[0]+'_seg.nii'
-        
-        inp = nib.load(self.input_dir + new_input).get_fdata()
-        target = nib.load(self.target_dir + new_target).get_fdata()
-        
-        data = {'image': inp, 'mask': target}
-        
-        if self.transform == True:
-            aug_data = self.train_transforms(**data)
-            filename_df = self.input[i].split('.nii')[0]
+        return len(self.files)
+
+    def load_nifti(self, path):
+        if path not in self.cache:
+            self.cache[path] = nib.load(path).get_fdata()
+        return self.cache[path]
+
+    def __getitem__(self, idx):
+        filename = self.files[idx]
+        base = filename.split('.nii')[0]
+
+        # Load volumes
+        x = self.load_nifti(os.path.join(self.input_dir, filename))
+        y = self.load_nifti(os.path.join(self.target_dir, base + '_seg.nii'))
+
+        data = {'image': x, 'mask': y}
+
+        if self.transform:
+            data = self.train_tf(**data)
         else:
-            aug_data = self.val_transforms(**data)
-            filename_df = self.input[i].split('.nii')[0]
+            data = self.val_tf(**data)
 
-        #checking if image has an associated cognitive score 
-        files_have_cog = self.df['filenames'].values.tolist()
-        a_score = filename_df in files_have_cog
-        
-        #returning the cognitive score if true
-        y_adas_score = None
-        if a_score == True:
-            y_adas_score = self.df[self.df['filenames'] == filename_df]['ADAS11'].values[0]
-            
-        x, y_img = aug_data['image'], aug_data['mask']
-        
-        return x[None,], y_img, y_adas_score, self.input[i].split('.nii')[0]
-    
-    def get_baseline_file(self, current_file):
-        for s in filter(lambda x: current_file in x, self.patient_files):
-            return s
+        x = data['image']
+        y = data['mask']
 
-            
-def visualize_slices(brain, start, stop, target=False, slice_type='sagittal'):
-    """
-    brain: instance of the dataset
-    start: starting slice
-    stop: ending slice
-    target: return input or target
-    slice_type: sagittal, coronal, or horizontal slices
-    """
-    rang = stop-start
-    cols = int(rang/5)
-    
-    fig, ax = plt.subplots(cols, 5, figsize = (int(25),int(rang/(1.5))))
-    fig.set_facecolor("black")
-    ax = ax.flatten()
-    start_idx = start
+        # Normalize (CRITICAL for R²)
+        x = (x - x.mean()) / (x.std() + 1e-8)
 
-    for i in range(0,rang, 1):
-        if slice_type == 'sagittal':            
-            brain_in = brain[0][:,start+i,:,:]
-            brain_out= brain[1][start+i,:,:]
-        elif slice_type == 'coronal':
-            brain_in = brain[0][:,:,start+i,:]
-            brain_out= brain[1][:,start+i,:]
-        elif slice_type == 'horizontal':
-            brain_in = brain[0][:,:,:,start+i]
-            brain_out= brain[1][:,:,start+i]
+        # Get regression target
+        row = self.df[self.df['filenames'] == base]
+        if len(row) == 0:
+            raise ValueError(f"No label for {base}")
 
-        shape_img = np.shape(brain_in)
-        if target == False:
-            ax[i].set_facecolor('black')
-            ax[i].set_title(f'slice: {start_idx}')
-            ax[i].imshow(brain_in.reshape(shape_img[1],shape_img[2]))
-        if target == True:
-            ax[i].set_facecolor('black')
-            ax[i].set_title(f'slice: {start_idx}')
-            ax[i].imshow(brain_out)
-        start_idx+=1
-    plt.tight_layout()
-    
-    
-def split_train_val(X_tr, X_v, df):
-    X_train_files = [f.split('.nii')[0] for f in X_tr]
-    X_val_files = [f.split('.nii')[0] for f in X_v]
+        y_adas = row['ADAS11'].values[0]
 
-    
-    X_train = df[df['filenames'].isin(X_train_files)]
-    X_val = df[df['filenames'].isin(X_val_files)]
+        return (
+            torch.tensor(x, dtype=torch.float32),      # [D,H,W]
+            torch.tensor(y, dtype=torch.long),         # segmentation
+            torch.tensor(y_adas, dtype=torch.float32), # regression
+            base
+        )
 
-    y_adas_train = X_train['ADAS11'].values
-    y_adas_val = X_val['ADAS11'].values
-    y_mmse_train = X_train['MMSE'].values
-    y_mmse_val = X_val['MMSE'].values
 
-    X_train = X_train.drop(columns=['filenames', 'ADAS11', 'MMSE'])
-    X_val = X_val.drop(columns=['filenames', 'ADAS11', 'MMSE'])
-    
-    
-    return X_train, X_val, y_adas_train, y_adas_val, y_mmse_train, y_mmse_val
+# =====================
+# Patient-level split (8-1-1)
+# =====================
+
+def create_patient_split(files, seed=42):
+    patient_ids = list(set([f[8:16] for f in files]))
+
+    train_p, temp_p = train_test_split(
+        patient_ids, test_size=0.2, random_state=seed
+    )
+
+    val_p, test_p = train_test_split(
+        temp_p, test_size=0.5, random_state=seed
+    )
+
+    return train_p, val_p, test_p
+
+
+def split_files_by_patient(files, train_p, val_p, test_p):
+    train, val, test = [], [], []
+
+    for f in files:
+        pid = f[8:16]
+        if pid in train_p:
+            train.append(f)
+        elif pid in val_p:
+            val.append(f)
+        elif pid in test_p:
+            test.append(f)
+
+    return train, val, test
+
+
+# =====================
+# Data initialization
+# =====================
+
+def load_all_files():
+    path = '/home/madar/Downloads/train_files5.data'
+    with open(path, 'rb') as f:
+        files = pickle.load(f)
+    return files
+
 
 def initialize_data():
     input_path = '/media/rajlab/sachin_data_1/userdata/daren/mri/'
     target_path = '/media/rajlab/sachin_data_1/userdata/daren/target/target_files/'
-    csv_path = 'cleaned_df_5_31.csv'
-    df = pd.read_csv(csv_path)
-    X_tr, X_v = get_file_splits()
-    print(f'len X_v: {len(X_v)}')
-    X_train, X_val, y_adas_train, y_adas_val, y_mmse_train, y_mmse_val = split_train_val(X_tr, X_v, df)
-    
-    return X_train, X_val, y_adas_train, y_adas_val, y_mmse_train, y_mmse_val, input_path, target_path, csv_path, df
-    
-    
-def get_file_splits(subset='all'):
-
-    if subset == 'all':
-        paths = ['/home/madar/Downloads/train_files5.data', 
-                 '/home/madar/Downloads/val_files5.data'] 
-
-    with open(paths[0], 'rb') as filehandle:
-        X_tr = pickle.load(filehandle)
-    with open(paths[1], 'rb') as filehandle:
-        X_v = pickle.load(filehandle)
-
-    return X_tr, X_v
-    
+    df = pd.read_csv('cleaned_df_5_31.csv')
+    return input_path, target_path, df
 
 
-def get_ds_dl(subset='all', batch_size=10, num_workers=16):
-    
-    _, _, _, _, _, _, input_path, target_path, csv_path, df = initialize_data()
-    X_tr, X_v = get_file_splits(subset=subset) 
-    ds_train = CogDataset3d(input_path, target_path, X_tr, df, transform=True, crop = (128,128))
-    ds_val = CogDataset3d(input_path, target_path, X_v, df, transform=False, crop = (128,128))
-    dl_train = DataLoader(ds_train, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    dl_val = DataLoader(ds_val, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    return ds_train, ds_val, dl_train, dl_val
+# =====================
+# Dataloaders
+# =====================
 
-def tab_predict(pipe, X_train, y_train, X_val, y_val, name = 'Model'):
-    pipe.fit(X_train, y_train)
-    preds = pipe.predict(X_val)
-    train_preds = pipe.predict(X_train)
+def get_ds_dl(batch_size=5, num_workers=8):
+    input_path, target_path, df = initialize_data()
+    all_files = load_all_files()
 
-    print(f"{f'{name} Train Loss'}: {round(mean_squared_error(y_train, train_preds),3)}")
-    print(f"{f'{name}  Train R2  '}: {round(r2_score(y_train, train_preds),3)}\n")
-    print(f"{f'{name}  Valid Loss'}: {round(mean_squared_error(y_val, preds),3)}")
-    print(f"{f'{name}  Valid R2  '}: {round(r2_score(y_val, preds),3)}\n")
-    
-    return train_preds, preds
+    train_p, val_p, test_p = create_patient_split(all_files)
+    X_train, X_val, X_test = split_files_by_patient(
+        all_files, train_p, val_p, test_p
+    )
 
+    print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
 
-def show_test_accuracy(nums, model, dl_test, batch_size=10, 
-                       device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
-    use_amp = True
-    model.eval()
-    batch_losses = []
-    total = 0
-    correct = 0
-    total_loss = 0
-    i=0
-    nums=1
-    for x, y, y_score, filenames in dl_test:
-        with torch.no_grad(): 
-            
-            y = y.squeeze(1).long().cuda()
-            dim1,dim2,dim3,dim4 = y.size() #CHANGED
-            x = x.view(dim1,1,dim2,dim3,dim4).cuda()
-            total += dim1*dim2*dim3*dim4  
+    ds_train = CogDataset3d(input_path, target_path, X_train, df, transform=True)
+    ds_val   = CogDataset3d(input_path, target_path, X_val, df, transform=False)
+    ds_test  = CogDataset3d(input_path, target_path, X_test, df, transform=False)
 
+    dl_train = DataLoader(ds_train, batch_size=batch_size, shuffle=True,
+                          num_workers=num_workers, pin_memory=True)
 
-            with torch.cuda.amp.autocast(enabled=use_amp): 
+    dl_val = DataLoader(ds_val, batch_size=batch_size, shuffle=False,
+                        num_workers=num_workers, pin_memory=True)
 
-                total += y.shape[0]
-                reg_out, y_hat = model(x)
-                loss = F.cross_entropy(y_hat, y)
-                batch_losses.append(loss.item())
-                pred = torch.max(y_hat, 1)[1]
-                correct += (pred == y).float().sum().item()   
+    dl_test = DataLoader(ds_test, batch_size=batch_size, shuffle=False,
+                         num_workers=num_workers, pin_memory=True)
 
-                if i < nums:
-#                     slice_idx = random.randint(40,100)
-                    slice_idx = 100
-                    fig, ax = plt.subplots(3,3, figsize=(10,10))
-#                     fig.set_facecolor("black")
-                    ax=ax.flatten()
-                    sag_record = [x[i][0,:,:,slice_idx], y[i][:,:,slice_idx], pred[i][:,:,slice_idx]]
-                    hor_record = [x[i][0,:,slice_idx,:], y[i][:,slice_idx,:], pred[i][:,slice_idx,:]]
-                    cor_record = [x[i][0,slice_idx,:,:], y[i][slice_idx,:,:], pred[i][slice_idx,:,:]]
-
-                    for idx in range(0,3):
-                        colormap = ["gray", "jet", "jet"][idx]
-#                         ax[idx].set_facecolor('black')
-                        ax[idx].imshow((sag_record[idx]).cpu().numpy().reshape(128,128))
-#                         ax[idx+3].set_facecolor('black')
-                        ax[idx+3].imshow((hor_record[idx]).cpu().numpy().reshape(128,128))
-#                         ax[idx+6].set_facecolor('black')
-                        ax[idx+6].imshow((cor_record[idx]).cpu().numpy().reshape(128,128))
-                        
-                    i += 1
-    print(f'\nCorrect predictions percentage is: {np.round((correct*100/total), 4)}')
-    
+    return ds_train, ds_val, ds_test, dl_train, dl_val, dl_test
