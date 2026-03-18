@@ -180,7 +180,7 @@ class LitURNet3D(pl.LightningModule):
         return loss
 
     # =====================
-    # Validation
+    # Validation and Testing
     # =====================
 
     def validation_step(self, batch, batch_idx):
@@ -206,6 +206,18 @@ class LitURNet3D(pl.LightningModule):
             'val_reg_loss': reg_loss,
             'val_r2': r2
         }, prog_bar=True)
+
+    def test_step(self, batch, batch_idx):
+        X, y_img, y_adas, filenames = batch
+
+        X = X.unsqueeze(1)
+        y_adas = y_adas.view(-1, 1)
+
+        reg_out, _ = self(X)
+        pred = self.fuse_with_tabular(reg_out, filenames)
+
+        r2 = self.val_r2(pred.view(-1), y_adas.view(-1))
+        self.log("test_r2", r2, prog_bar=True)
 
     # =====================
     # Fusion (learned)
@@ -244,13 +256,19 @@ class LitURNet3D(pl.LightningModule):
 
     def setup(self, stage=None):
         from CogDataset3d import get_ds_dl
-        self.ds_train, self.ds_val, self.dl_train, self.dl_val = get_ds_dl('all', batch_size=self.hparams.batch_size)
+        self.ds_train, self.ds_val, self.ds_test, \
+        self.dl_train, self.dl_val, self.dl_test = get_ds_dl(
+            batch_size=self.hparams.batch_size
+        )
 
     def train_dataloader(self):
         return self.dl_train
 
     def val_dataloader(self):
         return self.dl_val
+
+    def test_dataloader(self):
+        return self.dl_test
 
 
 # =====================
